@@ -2,9 +2,11 @@ import express from "express";
 import { Server } from "socket.io";
 import { createServer } from "http";
 import cors from "cors";
+import {config} from "dotenv";
 
 const app = express();
 app.use(cors());
+config();
 
 const server = createServer(app);
 
@@ -48,8 +50,8 @@ io.on("connection", (socket) => {
   });
 });
 
-server.listen(3000, () => {
-  console.log("Server is listening on port 3000");
+server.listen(process.env.PORT, () => {
+  console.log(`Server is listening on port ${process.env.PORT}`);
 });
 
 server.on("error", (err) => {
