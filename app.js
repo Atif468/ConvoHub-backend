@@ -5,18 +5,30 @@ import cors from "cors";
 import {config} from "dotenv";
 
 const app = express();
-app.use(cors());
 config();
+const allowedOrigins = ["http://localhost:5173", "https://chat-app-hazel-pi.vercel.app"];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    methods: ["GET", "POST"],
+  })
+);
 
 const server = createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: "https://chat-app-hazel-pi.vercel.app/",
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
   },
 });
-
 let users = {};
 
 io.on("connection", (socket) => {
