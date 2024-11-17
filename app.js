@@ -4,6 +4,8 @@ import { createServer } from "http";
 import cors from "cors";
 import { config } from "dotenv";
 import fs from "fs";
+import path from "path";
+import bodyParser from "body-parser"; // Add for JSON parsing of base64
 
 // Initialize environment variables
 config();
@@ -11,7 +13,13 @@ config();
 // Initialize app and server
 const app = express();
 app.use(cors());
+app.use(bodyParser.json({ limit: "10mb" })); // Increase limit for large files
 const server = createServer(app);
+
+// Serve static files for uploaded files
+const uploadDir = path.resolve("uploads");
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+app.use("/uploads", express.static(uploadDir));
 
 // Socket.io server setup
 const io = new Server(server, {
@@ -27,7 +35,7 @@ let users = {};
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
-  // User join event
+  // User joins chat
   socket.on("join", (username) => {
     users[socket.id] = { id: socket.id, name: username };
     io.emit("userList", Object.values(users));
@@ -37,63 +45,57 @@ io.on("connection", (socket) => {
     });
   });
 
-  // Private message event
+  // Private messaging
   socket.on("privateMessage", ({ text, to }) => {
     const fromUser = users[socket.id];
     if (fromUser && users[to]) {
-      const recipientSocket = users[to].id;
-      io.to(recipientSocket).emit("privateMessage", { from: fromUser.name, text });
+      io.to(users[to].id).emit("privateMessage", { from: fromUser.name, text });
       socket.emit("privateMessage", { from: fromUser.name, text });
     }
   });
 
-  // Typing event
+  // Typing notification
   socket.on("typing", (to) => {
     const fromUser = users[socket.id];
     if (fromUser && users[to]) {
-      const recipientSocket = users[to].id;
-      io.to(recipientSocket).emit("typing", fromUser.name);
+      io.to(users[to].id).emit("typing", fromUser.name);
     }
   });
 
-  // File upload handling
-  socket.on("send-file", async (fileData) => {
-    // Ensure fileData.file is a base64 string
-    console.log("aaya");
-    if (fileData.file && typeof fileData.file === "string") {
-      // Decode base64 file and save it to disk
-      const fileBuffer = await Buffer.from(fileData.file, 'base64');
-      const filePath = `uploads/${Date.now()}_${fileData.filename}`;
-  
-      fs.writeFile(filePath, fileBuffer, (err) => {
-        if (err) {
-          socket.emit("error", "File upload failed");
-          return;
-        }
-  
-        const fileUrl = `/uploads/${filePath.split('/').pop()}`;
-        const fromUser = users[socket.id];
-        const recipientSocket = users[fileData.to].id;
-        io.to(recipientSocket).emit("privateMessage", { from: fromUser.name, file: fileUrl });
-        socket.emit("privateMessage", { from: fromUser.name, file: fileUrl });
-      });
-    } else {
-      socket.emit("error", "Invalid file data received");
-    }
-  });
-  
-
-  // Code snippet handling (treated as text)
-  socket.on("send-code", ({ code, to }) => {
+  // File sharing
+  socket.on("send-file", (fileData) => {
+    const { file, filename, to } = fileData;
     const fromUser = users[socket.id];
-    if (fromUser && users[to]) {
-      const recipientSocket = users[to].id;
-      io.to(recipientSocket).emit("privateMessage", { from: fromUser.name, text: code });
-      socket.emit("privateMessage", { from: fromUser.name, text: code });
+
+    if (!file || !filename || !fromUser || !users[to]) {
+      socket.emit("error", "File transfer failed. Invalid data.");
+      return;
     }
+
+    const fileBuffer = Buffer.from(file.split(",")[1], "base64"); // Convert base64 to Buffer
+    const filePath = path.join(uploadDir, `${Date.now()}_${filename}`);
+
+    fs.writeFile(filePath, fileBuffer, (err) => {
+      if (err) {
+        console.error("File upload error:", err);
+        socket.emit("error", "File upload failed");
+        return;
+      }
+
+      const fileUrl = `/uploads/${path.basename(filePath)}`;
+
+      const messageData = {
+        from: fromUser.name,
+        file: fileUrl,
+        filename, // Send filename for frontend display
+      };
+
+      io.to(users[to].id).emit("privateMessage", messageData);
+      socket.emit("privateMessage", messageData);
+    });
   });
 
-  // User disconnect event
+  // Disconnect event
   socket.on("disconnect", () => {
     const username = users[socket.id]?.name;
     delete users[socket.id];
@@ -106,15 +108,6 @@ io.on("connection", (socket) => {
   });
 });
 
-// Static file serving (for file downloads)
-app.use("/uploads", express.static("uploads"));
-
-// Start server
-server.listen(process.env.PORT, () => {
-  console.log(`Server is listening on port ${process.env.PORT}`);
-});
-
-// Error handling
-server.on("error", (err) => {
-  console.error("Server error:", err);
-});
+// Start the server
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
